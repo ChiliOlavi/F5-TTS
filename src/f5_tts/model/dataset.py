@@ -141,7 +141,11 @@ class CustomDataset(Dataset):
         if self.preprocessed_mel:
             mel_spec = torch.tensor(row["mel_spec"])
         else:
-            audio, source_sample_rate = torchaudio.load(audio_path)
+            try:
+                audio, source_sample_rate = torchaudio.load(audio_path, normalize=True)
+            except Exception as e:
+                print(f"Error loading audio {audio_path}: {e}")
+                return None
 
             # make sure mono input
             if audio.shape[0] > 1:
@@ -307,6 +311,11 @@ def load_dataset(
 
 
 def collate_fn(batch):
+    batch = [item for item in batch if item is not None]  # filter out None items
+    if len(batch) == 0:
+        # Option 1: raise an error for debugging
+        print("Empty batch encountered in collate_fn. This probably means all items were invalid or filtered out.")
+        return None
     mel_specs = [item["mel_spec"].squeeze(0) for item in batch]
     mel_lengths = torch.LongTensor([spec.shape[-1] for spec in mel_specs])
     max_mel_length = mel_lengths.amax()

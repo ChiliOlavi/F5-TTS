@@ -358,6 +358,8 @@ class Trainer:
             )
 
             for batch in current_dataloader:
+                if batch is None:
+                    continue  # skip this batch if collate_fn returned None
                 with self.accelerator.accumulate(self.model):
                     text_inputs = batch["text"]
                     mel_spec = batch["mel"].permute(0, 2, 1)

@@ -173,6 +173,7 @@ def load_settings(project_name):
 
 # Load metadata
 def get_audio_duration(audio_path):
+    print(audio_path)
     """Calculate the duration mono of an audio file."""
     audio, sample_rate = torchaudio.load(audio_path)
     return audio.shape[1] / sample_rate
