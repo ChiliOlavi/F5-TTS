@@ -20,6 +20,12 @@ DEFAULT_TTS_MODEL_CFG = [
 
 SWEDISH_MODEL_PATH = "E:\\F5_TTS\\F5-TTS\\ckpts\\swedish_parliament_data\\model_last.pt"
 
+FINNISH_MODEL_CONFIG = [
+    "hf://AsmoKoskinen/F5-TTS_Finnish_Model/model_commonvoice_fi_librivox_fi_vox_populi_fi_20250323/model_last_20250323.safetensors",
+    "hf://AsmoKoskinen/F5-TTS_Finnish_Model/model_commonvoice_fi_librivox_fi_vox_populi_fi_20250323/vocab.txt",
+    json.dumps(dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)),
+]
+
 vocoder = load_vocoder()
 
 @lru_cache(maxsize=2)
@@ -31,6 +37,10 @@ def get_model(language: str):
     elif language == "Swedish":
         model_cfg = json.loads(DEFAULT_TTS_MODEL_CFG[2])  # Use same config unless you have a Swedish-specific one
         return load_model(DiT, model_cfg, SWEDISH_MODEL_PATH)
+    elif language == "Finnish":
+        ckpt_path = str(cached_path(FINNISH_MODEL_CONFIG[0]))
+        model_cfg = json.loads(FINNISH_MODEL_CONFIG[2])
+        return load_model(DiT, model_cfg, ckpt_path, vocab_file=str(cached_path(FINNISH_MODEL_CONFIG[1])))
     else:
         raise ValueError(f"Unsupported language: {language}")
 
@@ -67,8 +77,9 @@ async def infer_api(
             #remove_silence=False,
         )
         # save the output wav:
-        from scipy.io import wavfile
         wavfile.write(out_wav_path, sr, wav)
+        background_tasks.add_task(os.remove, ref_audio_path)
+        background_tasks.add_task(os.remove, out_wav_path)
         return FileResponse(out_wav_path, media_type="audio/wav", filename=out_wav_path, background=background_tasks)
     except Exception as e:
         if os.path.exists(ref_audio_path):

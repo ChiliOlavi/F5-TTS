@@ -21,8 +21,8 @@ def call_infer_api(language, ref_text, gen_text, audio_path):
 if __name__ == "__main__":
     # Example usage
     call_infer_api(
-        language="Swedish",  # just the language name
+        language="Finnish",  # just the language name
         ref_text="Jävla helvete.",
-        gen_text="Jag tycker om att programmera.",
+        gen_text="Se puuro syödään vikisemättä.",
         audio_path="javla_helvete.wav"
     )
