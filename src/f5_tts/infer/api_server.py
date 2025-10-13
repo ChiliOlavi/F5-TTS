@@ -1,4 +1,5 @@
 import json
+import dotenv
 from fastapi import FastAPI, File, UploadFile, Form, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse
 import tempfile
@@ -11,10 +12,14 @@ from functools import lru_cache
 from scipy.io import wavfile
 import requests
 import io
+from dotenv import load_dotenv
+load_dotenv()
+from typing import Optional
 
-from typing import Literal, Optional
+HF_TOKEN = os.getenv("RK_TTS_TOKEN", None)
+SWEDISH_MODEL_PATH = os.getenv("SWEDISH_MODEL_PATH", None)
+SWEDISH_VOCAB_PATH = os.getenv("SWEDISH_VOCAB_PATH", None)
 
-Language = Literal["English", "Swedish", "Finnish", "North Sámi"]
 
 app = FastAPI()
 
@@ -24,7 +29,12 @@ DEFAULT_TTS_MODEL_CFG = [
     json.dumps(dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)),
 ]
 
-SWEDISH_MODEL_PATH = "E:\\F5_TTS\\F5-TTS\\ckpts\\swedish_parliament_data\\model_last.pt"
+
+SWEDISH_MODEL_CONFIG = [
+    SWEDISH_MODEL_PATH,
+    SWEDISH_VOCAB_PATH,
+    json.dumps(dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4))
+]
 
 FINNISH_MODEL_CONFIG = [
     "hf://AsmoKoskinen/F5-TTS_Finnish_Model/model_commonvoice_fi_librivox_fi_vox_populi_fi_20250323/model_last_20250323.safetensors",
@@ -41,8 +51,12 @@ def get_model(language: str):
         model_cfg = json.loads(DEFAULT_TTS_MODEL_CFG[2])
         return load_model(DiT, model_cfg, ckpt_path)
     elif language == "Swedish":
-        model_cfg = json.loads(DEFAULT_TTS_MODEL_CFG[2])  # Use same config unless you have a Swedish-specific one
-        return load_model(DiT, model_cfg, SWEDISH_MODEL_PATH)
+        if HF_TOKEN is None:
+            raise ValueError("HF_TOKEN is not set in environment variables")
+        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+        ckpt_path = str(cached_path(SWEDISH_MODEL_CONFIG[0], headers=headers))
+        model_cfg = json.loads(SWEDISH_MODEL_CONFIG[2])  # Use same config unless you have a Swedish-specific one
+        return load_model(DiT, model_cfg, ckpt_path)
     elif language == "Finnish":
         ckpt_path = str(cached_path(FINNISH_MODEL_CONFIG[0]))
         model_cfg = json.loads(FINNISH_MODEL_CONFIG[2])
