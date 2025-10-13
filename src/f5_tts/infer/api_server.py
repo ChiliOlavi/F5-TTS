@@ -9,6 +9,12 @@ from f5_tts.infer.utils_infer import load_model, infer_process, load_vocoder
 from f5_tts.model import DiT
 from functools import lru_cache
 from scipy.io import wavfile
+import requests
+import io
+
+from typing import Literal, Optional
+
+Language = Literal["English", "Swedish", "Finnish", "North Sámi"]
 
 app = FastAPI()
 
@@ -44,45 +50,62 @@ def get_model(language: str):
     else:
         raise ValueError(f"Unsupported language: {language}")
 
+
+def get_sami_tts(text: str):
+    r = requests.post("https://api-giellalt.uit.no/tts/se/sunna", json={"text": text})
+    if r.status_code == 200:
+        # Convert bytes to NumPy array and sample rate
+        wav_bytes = io.BytesIO(r.content)
+        sr, wav = wavfile.read(wav_bytes)
+        return wav, sr
+    else:
+        raise RuntimeError(f"Sami TTS API error: {r.status_code} {r.text}")
+
+
 @app.post("/infer")
 async def infer_api(
     language: str = Form(...),
     ref_text: str = Form(...),
     gen_text: str = Form(...),
-    audio_file: UploadFile = File(...),
+    audio_file: Optional[UploadFile] = File(None),
     background_tasks: BackgroundTasks = None,
 ):
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-        contents = await audio_file.read()
-        tmp.write(contents)
-        ref_audio_path = tmp.name
+    if language == "North Sámi":
+        if ref_text is not None or audio_file is not None:
+            return JSONResponse({"error": "only gen_text is allowed for North Sámi"}, status_code=400)
+        wav, sr = get_sami_tts(gen_text)
+        out_wav_path = "sami_tts_output.wav"
+        ref_audio_path = None
+    else:
+        if audio_file is None or ref_text is None or gen_text is None:
+            return JSONResponse({"error": "audio_file, ref_text, and gen_text are required for this language"}, status_code=400)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+            contents = await audio_file.read()
+            tmp.write(contents)
+            ref_audio_path = tmp.name
 
-    out_wav_path = ref_audio_path + "_gen.wav"
-    try:
+        out_wav_path = ref_audio_path + "_gen.wav"
+
         model = get_model(language)
-        # Use infer_process instead of model.infer
         wav, sr, spec = infer_process(
             ref_audio_path,
             ref_text,
             gen_text,
             model,
             vocoder,
-            #file_wave=out_wav_path,
-            #file_spec=None,
-            #seed=666,
             nfe_step=32,
             cfg_strength=2,
             sway_sampling_coef=-1,
             speed=1.0,
-            #remove_silence=False,
         )
-        # save the output wav:
+    try:
         wavfile.write(out_wav_path, sr, wav)
-        background_tasks.add_task(os.remove, ref_audio_path)
+        if ref_audio_path:
+            background_tasks.add_task(os.remove, ref_audio_path)
         background_tasks.add_task(os.remove, out_wav_path)
         return FileResponse(out_wav_path, media_type="audio/wav", filename=out_wav_path, background=background_tasks)
     except Exception as e:
-        if os.path.exists(ref_audio_path):
+        if ref_audio_path and os.path.exists(ref_audio_path):
             os.remove(ref_audio_path)
         if os.path.exists(out_wav_path):
             os.remove(out_wav_path)
