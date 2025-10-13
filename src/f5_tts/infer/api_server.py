@@ -16,9 +16,9 @@ from dotenv import load_dotenv
 load_dotenv()
 from typing import Optional
 
-HF_TOKEN = os.getenv("RK_TTS_TOKEN", None)
-SWEDISH_MODEL_PATH = os.getenv("SWEDISH_MODEL_PATH", None)
-SWEDISH_VOCAB_PATH = os.getenv("SWEDISH_VOCAB_PATH", None)
+HF_TOKEN = os.environ["RK_TTS_TOKEN"]
+SWEDISH_MODEL_PATH = os.environ["SWEDISH_MODEL_PATH"]
+SWEDISH_VOCAB_PATH = os.environ["SWEDISH_VOCAB_PATH"]
 
 
 app = FastAPI()

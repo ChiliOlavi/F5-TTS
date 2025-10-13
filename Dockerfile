@@ -16,10 +16,11 @@ RUN set -x \
     
 WORKDIR /workspace
 
-RUN git clone https://github.com/SWivid/F5-TTS.git \
+RUN git clone --branch swedish-tts https://github.com/ChiliOlavi/F5-TTS.git \
     && cd F5-TTS \
     && git submodule update --init --recursive \
-    && pip install -e . --no-cache-dir
+    && pip install -e . --no-cache-dir \
+    && pip install python-dotenv fastapi uvicorn[standard]
 
 ENV SHELL=/bin/bash
 
@@ -28,3 +29,5 @@ VOLUME /root/.cache/huggingface/hub/
 EXPOSE 7860
 
 WORKDIR /workspace/F5-TTS
+
+CMD ["uvicorn", "src.f5_tts.infer.api_server:app", "--host", "0.0.0.0", "--port", "7860"]
