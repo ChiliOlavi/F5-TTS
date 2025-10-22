@@ -19,6 +19,8 @@ from typing import Optional
 HF_TOKEN = os.environ["RK_TTS_TOKEN"]
 SWEDISH_MODEL_PATH = os.environ["SWEDISH_MODEL_PATH"]
 SWEDISH_VOCAB_PATH = os.environ["SWEDISH_VOCAB_PATH"]
+MULTILINGUAL_MODEL_PATH = os.environ["MULTILINGUAL_MODEL_PATH"]
+MULTILINGUAL_VOCAB_PATH = os.environ["MULTILINGUAL_VOCAB_PATH"]
 
 
 app = FastAPI()
@@ -42,6 +44,12 @@ FINNISH_MODEL_CONFIG = [
     json.dumps(dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)),
 ]
 
+MULTILINGUAL_MODEL_CONFIG = [
+    MULTILINGUAL_MODEL_PATH,
+    MULTILINGUAL_VOCAB_PATH,
+    json.dumps(dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)),
+]
+
 vocoder = load_vocoder()
 
 @lru_cache(maxsize=2)
@@ -61,6 +69,13 @@ def get_model(language: str):
         ckpt_path = str(cached_path(FINNISH_MODEL_CONFIG[0]))
         model_cfg = json.loads(FINNISH_MODEL_CONFIG[2])
         return load_model(DiT, model_cfg, ckpt_path, vocab_file=str(cached_path(FINNISH_MODEL_CONFIG[1])))
+    elif language == "Multilingual":
+        if HF_TOKEN is None:
+            raise ValueError("HF_TOKEN is not set in environment variables")
+        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+        ckpt_path = str(cached_path(MULTILINGUAL_MODEL_CONFIG[0], headers=headers))
+        model_cfg = json.loads(MULTILINGUAL_MODEL_CONFIG[2])
+        return load_model(DiT, model_cfg, ckpt_path, vocab_file=str(cached_path(MULTILINGUAL_MODEL_CONFIG[1])))
     else:
         raise ValueError(f"Unsupported language: {language}")
 
@@ -83,6 +98,10 @@ async def infer_api(
     gen_text: str = Form(...),
     audio_file: Optional[UploadFile] = File(None),
     background_tasks: BackgroundTasks = None,
+    speed: float = Form(1.0),
+    sway: float = Form(0.0),
+    cfg_strength: float = Form(2.0),
+    nfe_step: int = Form(32),
 ):
     if language == "North Sámi":
         if ref_text is not None or audio_file is not None:
@@ -107,10 +126,10 @@ async def infer_api(
             gen_text,
             model,
             vocoder,
-            nfe_step=32,
-            cfg_strength=2,
-            sway_sampling_coef=-1,
-            speed=1.0,
+            nfe_step=nfe_step,
+            cfg_strength=cfg_strength,
+            sway_sampling_coef=sway,
+            speed=speed,
         )
     try:
         wavfile.write(out_wav_path, sr, wav)
