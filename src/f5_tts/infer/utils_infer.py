@@ -449,6 +449,10 @@ def infer_batch_process(
     streaming=False,
     chunk_size=2048,
 ):
+    import math
+    import logging
+    from concurrent.futures import ThreadPoolExecutor
+
     audio, sr = ref_audio
     if audio.shape[0] > 1:
         audio = torch.mean(audio, dim=0, keepdim=True)
@@ -480,10 +484,50 @@ def infer_batch_process(
         if fix_duration is not None:
             duration = int(fix_duration * target_sample_rate / hop_length)
         else:
-            # Calculate duration
-            ref_text_len = len(ref_text.encode("utf-8"))
-            gen_text_len = len(gen_text.encode("utf-8"))
-            duration = ref_audio_len + int(ref_audio_len / ref_text_len * gen_text_len / local_speed)
+            # --- Robust duration computation starts here ---
+            # safe lengths (avoid division by zero)
+            ref_text_len = max(1, len(ref_text.encode("utf-8")))
+            gen_text_len = max(1, len(gen_text.encode("utf-8")))
+
+            # estimate chars-per-frame from reference (stable)
+            chars_per_frame = ref_text_len / max(1, ref_audio_len)
+
+            # estimate how many frames the generated text should occupy (use ceil to avoid truncation to 0)
+            estimated_added_frames = int(
+                math.ceil((gen_text_len / max(1e-6, chars_per_frame)) / max(1e-6, local_speed))
+            )
+
+            # enforce sensible minimum and maximum added frames
+            # MIN_ADDED_FRAMES: at least ~50 ms of audio (adjust if needed)
+            MIN_ADDED_FRAMES = max(1, int(0.05 * target_sample_rate / hop_length))
+            # MAX_ADDED_FRAMES: guard against runaway lengths (e.g., 10x ref audio length)
+            MAX_ADDED_FRAMES = max(ref_audio_len * 10, MIN_ADDED_FRAMES)
+
+            # clamp to [MIN_ADDED_FRAMES, MAX_ADDED_FRAMES]
+            added_frames = max(estimated_added_frames, MIN_ADDED_FRAMES)
+            added_frames = min(added_frames, MAX_ADDED_FRAMES)
+
+            # final duration must be strictly greater than ref_audio_len so generated[:, ref_audio_len:, :] is non-empty
+            duration = ref_audio_len + int(added_frames)
+
+            # debug logging for each chunk so you can inspect the values that drive generation
+            try:
+                logger = logging.getLogger(__name__)
+                logger.debug(
+                    "duration calc: ref_audio_len=%d ref_text_len=%d gen_text_len=%d local_speed=%.3f "
+                    "chars_per_frame=%.6f estimated_added=%d added=%d duration=%d",
+                    ref_audio_len,
+                    ref_text_len,
+                    gen_text_len,
+                    local_speed,
+                    chars_per_frame,
+                    estimated_added_frames,
+                    added_frames,
+                    duration,
+                )
+            except Exception:
+                pass
+            # --- Robust duration computation ends here ---
 
         # inference
         with torch.inference_mode():
@@ -577,7 +621,6 @@ def infer_batch_process(
 
         else:
             yield None, target_sample_rate, None
-
 
 # remove silence from generated wav
 
