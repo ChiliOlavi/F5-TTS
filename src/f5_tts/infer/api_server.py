@@ -6,7 +6,7 @@ import tempfile
 import os
 import uvicorn
 from cached_path import cached_path
-from f5_tts.infer.utils_infer import load_model, infer_process, load_vocoder
+from f5_tts.infer.utils_infer import load_model, infer_process, load_vocoder, preprocess_ref_audio_text
 from f5_tts.model import DiT
 from functools import lru_cache
 from scipy.io import wavfile
@@ -15,6 +15,8 @@ import io
 from dotenv import load_dotenv
 load_dotenv()
 from typing import Optional
+import numpy as np
+import torch
 
 HF_TOKEN = os.environ["RK_TTS_TOKEN"]
 SWEDISH_MODEL_PATH = os.environ["SWEDISH_MODEL_PATH"]
@@ -64,7 +66,7 @@ def get_model(language: str):
         headers = {"Authorization": f"Bearer {HF_TOKEN}"}
         ckpt_path = str(cached_path(SWEDISH_MODEL_CONFIG[0], headers=headers))
         model_cfg = json.loads(SWEDISH_MODEL_CONFIG[2])  # Use same config unless you have a Swedish-specific one
-        return load_model(DiT, model_cfg, ckpt_path)
+        return load_model(DiT, model_cfg, ckpt_path, vocab_file=str(cached_path(SWEDISH_MODEL_CONFIG[1], headers=headers)))
     elif language == "Finnish":
         ckpt_path = str(cached_path(FINNISH_MODEL_CONFIG[0]))
         model_cfg = json.loads(FINNISH_MODEL_CONFIG[2])
@@ -102,6 +104,8 @@ async def infer_api(
     sway: float = Form(0.0),
     cfg_strength: float = Form(2.0),
     nfe_step: int = Form(32),
+    cross_fade_duration: float = Form(0.15),
+    seed: int = Form(-1),
 ):
     if language == "North Sámi":
         if ref_text is not None or audio_file is not None:
@@ -119,18 +123,39 @@ async def infer_api(
 
         out_wav_path = ref_audio_path + "_gen.wav"
 
+        # EXACT GRADIO FLOW:
+        
+        # 1. Set inference seed (exactly like Gradio)
+        if seed < 0 or seed > 2**31 - 1:
+            print("Seed must be in range 0 ~ 2147483647. Using random seed instead.")
+            seed = np.random.randint(0, 2**31 - 1)
+        torch.manual_seed(seed)
+        
+        # 2. Preprocess reference audio and text (exactly like Gradio)
+        ref_audio, ref_text = preprocess_ref_audio_text(ref_audio_path, ref_text, show_info=print)
+        
+        # 3. Get model
         model = get_model(language)
-        wav, sr, spec = infer_process(
-            ref_audio_path,
+        
+        # 4. Call infer_process with EXACT same parameters as Gradio
+        final_wave, final_sample_rate, combined_spectrogram = infer_process(
+            ref_audio,
             ref_text,
             gen_text,
             model,
             vocoder,
+            cross_fade_duration=cross_fade_duration,
             nfe_step=nfe_step,
-            cfg_strength=cfg_strength,
-            sway_sampling_coef=sway,
             speed=speed,
+            show_info=print,
+            progress=None,  # Gradio uses gr.Progress(), we use None
         )
+        
+        # Note: We're NOT doing remove_silence here since that's optional in Gradio
+        # The audio is already properly normalized by infer_process
+        wav = final_wave
+        sr = final_sample_rate
+                
     try:
         wavfile.write(out_wav_path, sr, wav)
         if ref_audio_path:

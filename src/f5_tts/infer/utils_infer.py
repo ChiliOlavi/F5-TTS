@@ -617,6 +617,26 @@ def infer_batch_process(
             # Create a combined spectrogram
             combined_spectrogram = np.concatenate(spectrograms, axis=1)
 
+            # --- Safety normalization and format-fixing ---
+            # Convert to float32, remove NaNs/infs, and ensure values are in [-1.0, 1.0].
+            # This avoids artifacts from overflow during cross-fade and ensures compatibility
+            # when writing WAV files (and when the browser expects PCM).
+            final_wave = np.asarray(final_wave, dtype=np.float32)
+            # Remove NaN / Inf if any (can happen if model produced unusual output or overlap math)
+            final_wave = np.nan_to_num(final_wave, nan=0.0, posinf=0.0, neginf=0.0)
+
+            if final_wave.size > 0:
+                max_abs = float(np.max(np.abs(final_wave)))
+                if max_abs <= 0:
+                    # silence, nothing to do
+                    pass
+                elif max_abs > 1.0:
+                    # scale everything down to just below 1.0 to avoid hard clipping
+                    final_wave = final_wave / max_abs * 0.999
+            else:
+                # avoid division by zero on empty arrays
+                final_wave = final_wave
+
             yield final_wave, target_sample_rate, combined_spectrogram
 
         else:
