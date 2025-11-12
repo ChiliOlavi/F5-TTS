@@ -101,8 +101,6 @@ async def infer_api(
     audio_file: Optional[UploadFile] = File(None),
     background_tasks: BackgroundTasks = None,
     speed: float = Form(1.0),
-    sway: float = Form(0.0),
-    cfg_strength: float = Form(2.0),
     nfe_step: int = Form(32),
     cross_fade_duration: float = Form(0.15),
     seed: int = Form(-1),
