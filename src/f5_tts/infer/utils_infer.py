@@ -311,7 +311,48 @@ def preprocess_ref_audio_text(ref_audio_orig, ref_text, show_info=print):
         with tempfile.NamedTemporaryFile(suffix=".wav", **tempfile_kwargs) as f:
             temp_path = f.name
 
-        aseg = AudioSegment.from_file(ref_audio_orig)
+        # First, check the audio format
+        probe_aseg = AudioSegment.from_file(ref_audio_orig)
+        
+        # If audio has unusual sample width (>16-bit), convert using ffmpeg directly
+        if probe_aseg.sample_width > 2:  # If more than 16-bit (2 bytes)
+            show_info(f"Converting {probe_aseg.sample_width * 8}-bit audio to 16-bit...")
+            # Create a temporary normalized file
+            with tempfile.NamedTemporaryFile(suffix=".wav", **tempfile_kwargs) as temp_normalized:
+                temp_normalized_path = temp_normalized.name
+                # Use ffmpeg directly via subprocess to ensure proper conversion
+                import subprocess
+                try:
+                    subprocess.run([
+                        'ffmpeg', '-y', '-i', ref_audio_orig,
+                        '-acodec', 'pcm_s16le',  # 16-bit PCM
+                        '-ar', str(target_sample_rate),  # resample to target rate
+                        '-ac', '1',  # mono
+                        temp_normalized_path
+                    ], check=True, capture_output=True)
+                    # Now load the properly converted file
+                    aseg = AudioSegment.from_file(temp_normalized_path)
+                except subprocess.CalledProcessError:
+                    # Fallback: use AudioSegment's export with format override
+                    show_info("ffmpeg direct call failed, using AudioSegment export...")
+                    # Try to load with specific format hints
+                    aseg = AudioSegment.from_file(ref_audio_orig)
+                    aseg = aseg.set_channels(1)  # Convert to mono first
+                    aseg = aseg.set_frame_rate(target_sample_rate)  # Resample
+                    # Export with explicit 16-bit format
+                    aseg.export(temp_normalized_path, format="wav", parameters=["-acodec", "pcm_s16le"])
+                    aseg = AudioSegment.from_file(temp_normalized_path)
+        else:
+            aseg = probe_aseg
+        
+        # Now aseg should be 16-bit, verify
+        if aseg.sample_width != 2:
+            raise ValueError(f"Failed to convert audio to 16-bit format. Current sample width: {aseg.sample_width * 8}-bit")
+        
+        # Normalize sample rate if not already done
+        if aseg.frame_rate != target_sample_rate:
+            show_info(f"Resampling from {aseg.frame_rate}Hz to {target_sample_rate}Hz...")
+            aseg = aseg.set_frame_rate(target_sample_rate)
 
         # 1. try to find long silence for clipping
         non_silent_segs = silence.split_on_silence(
