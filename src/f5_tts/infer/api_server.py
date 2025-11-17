@@ -17,6 +17,8 @@ load_dotenv()
 from typing import Optional
 import numpy as np
 import torch
+import soundfile as sf  # Add this import
+import random  # Add this import too (needed for seed generation)
 
 HF_TOKEN = os.environ["RK_TTS_TOKEN"]
 SWEDISH_MODEL_PATH = os.environ["SWEDISH_MODEL_PATH"]
@@ -104,19 +106,19 @@ async def infer_api(
     nfe_step: int = Form(32),
     cross_fade_duration: float = Form(0.15),
     seed: int = Form(-1),
+    remove_silence: bool = Form(False),  # Add this parameter
 ):
     if language == "North Sámi":
         if ref_text is not None or audio_file is not None:
-            return JSONResponse({"error": "only gen_text is allowed for North Sámi"}, status_code=400)
+            return JSONResponse({"error": "North Sámi does not support reference audio or text"}, status_code=400)
         wav, sr = get_sami_tts(gen_text)
         out_wav_path = "sami_tts_output.wav"
         ref_audio_path = None
     else:
         if audio_file is None or ref_text is None or gen_text is None:
-            return JSONResponse({"error": "audio_file, ref_text, and gen_text are required for this language"}, status_code=400)
+            return JSONResponse({"error": "Missing required parameters"}, status_code=400)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-            contents = await audio_file.read()
-            tmp.write(contents)
+            tmp.write(await audio_file.read())
             ref_audio_path = tmp.name
 
         out_wav_path = ref_audio_path + "_gen.wav"
@@ -125,8 +127,7 @@ async def infer_api(
         
         # 1. Set inference seed (exactly like Gradio)
         if seed < 0 or seed > 2**31 - 1:
-            print("Seed must be in range 0 ~ 2147483647. Using random seed instead.")
-            seed = np.random.randint(0, 2**31 - 1)
+            seed = random.randint(0, 2**31 - 1)
         torch.manual_seed(seed)
         
         # 2. Preprocess reference audio and text (exactly like Gradio)
@@ -146,25 +147,21 @@ async def infer_api(
             nfe_step=nfe_step,
             speed=speed,
             show_info=print,
-            progress=None,  # Gradio uses gr.Progress(), we use None
+            progress=None,
         )
+
+        # 5. Save the generated audio
+        sf.write(out_wav_path, final_wave, final_sample_rate)
         
-        # Note: We're NOT doing remove_silence here since that's optional in Gradio
-        # The audio is already properly normalized by infer_process
-        wav = final_wave
-        sr = final_sample_rate
+        # 6. Remove silence if requested
+        if remove_silence:
+            print("Removing silence from generated audio...")
+            from f5_tts.infer.utils_infer import remove_silence_for_generated_wav
+            remove_silence_for_generated_wav(out_wav_path)
                 
     try:
-        wavfile.write(out_wav_path, sr, wav)
-        if ref_audio_path:
-            background_tasks.add_task(os.remove, ref_audio_path)
-        background_tasks.add_task(os.remove, out_wav_path)
-        return FileResponse(out_wav_path, media_type="audio/wav", filename=out_wav_path, background=background_tasks)
+        return FileResponse(out_wav_path, media_type="audio/wav", filename="generated_audio.wav")
     except Exception as e:
-        if ref_audio_path and os.path.exists(ref_audio_path):
-            os.remove(ref_audio_path)
-        if os.path.exists(out_wav_path):
-            os.remove(out_wav_path)
         return JSONResponse({"error": str(e)}, status_code=500)
 
 if __name__ == "__main__":
